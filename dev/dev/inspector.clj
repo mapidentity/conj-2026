@@ -38,6 +38,44 @@
        (nil? (namespace (first x)))
        (contains? html-tags (first (str/split (name (first x)) #"[.#]")))))
 
+(defn tag-hiccup
+  "Add source attributes to a Hiccup element vector, else return it
+  unchanged. An already-tagged element is left alone, so the innermost
+  component's location wins."
+  [h src nm]
+  (if (and (element? h)
+           (not (and (map? (second h)) (contains? (second h) :data-src))))
+    (let [has-attrs? (map? (second h))
+          attrs (if has-attrs? (second h) {})
+          children (subvec h (if has-attrs? 2 1))]
+      (into [(first h) (assoc attrs :data-src src :data-name nm)] children))
+    h))
+
+(defn instrument-var!
+  "Wrap a view fn so the root element it returns carries the var's source
+  location (data-src = the defn site) and name (data-name = ns/fn).
+  Idempotent — unwraps to the original before re-wrapping on a reload."
+  [v]
+  (let [cur @v]
+    (when (fn? cur)
+      (let [orig (or (::orig (meta cur)) cur)
+            m (meta v)
+            src (str (:file m) ":" (:line m) ":" (or (:column m) 1))
+            nm (str (ns-name (:ns m)) "/" (:name m))
+            wrapped (with-meta
+                      (fn [& args] (tag-hiccup (apply orig args) src nm))
+                      {::orig orig})]
+        (alter-var-root v (constantly wrapped))))))
+
+(defn instrument-ns!
+  "Source-tag every fn the namespace defines. Wrapping a fn that returns
+  non-Hiccup is safe — tag-hiccup passes anything else through — so we can
+  blanket-instrument the whole namespace without picking functions."
+  [ns-sym]
+  (doseq [[_ v] (ns-interns ns-sym)
+          :when (and (var? v) (fn? @v))]
+    (instrument-var! v)))
+
 (defn tag-tree
   "Walk an assembled Hiccup tree just before it becomes HTML, turning each
   element's source metadata into real attributes: data-src \"file:line:col\"
@@ -81,4 +119,5 @@
                    (let [form (read1)]
                      (if (identical? form eof) acc (recur (conj acc form)))))]
         (doseq [form body]
-          (eval form))))))
+          (eval form))
+        (instrument-ns! (ns-name *ns*))))))
