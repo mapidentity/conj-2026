@@ -6,6 +6,7 @@
   structurally absent, not disabled. If additions are made and the app
   really needs to reference here, use `(requiring-resolve …)`."
   (:require
+    [dev.editor :as editor]
     [dev.socket :as socket]
     [dev.static :as static]
     [dev.watcher :as watcher]
@@ -20,7 +21,8 @@
   positions and appends the dev scripts."
   [body]
   (list (inspector/tag-tree body)
-        [:script {:src "/dev/reload.js"}]))
+        [:script {:src "/dev/reload.js"}]
+        [:script {:src "/dev/inspector.js"}]))
 
 (defn- dev-route
   "Handles dev endpoints, then falls back to files under static/,
@@ -28,7 +30,7 @@
   it to the app."
   [req]
   (case (:uri req)
-    "/dev/ws" (socket/ws-handler req)
+    "/dev/ws" (socket/ws-handler req editor/handle-msg!)
     (static/file (:uri req))))
 
 (defn wrap-dev
