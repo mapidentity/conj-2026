@@ -19,6 +19,8 @@
     '.insp-crumb{cursor:pointer;opacity:.65}' +
     '.insp-crumb:hover{opacity:1;text-decoration:underline}' +
     '.insp-crumb.leaf{opacity:1;font-weight:600;color:#fff}' +
+    '.insp-cname{opacity:.8;margin-right:2px}' +
+    '.insp-glyph{margin-left:4px;font-weight:600}' +
     '.insp-sep{opacity:.4;margin:0 4px}' +
     '.insp-loc{opacity:.55;margin-left:10px}' +
     '.insp-badge{position:fixed;left:10px;bottom:10px;z-index:99999;cursor:pointer;user-select:none;' +
@@ -90,13 +92,18 @@
   }
 
   // --- hover: box + breadcrumb of tagged ancestors ---
+  // A component instance carries TWO source locations on one node — its
+  // definition (data-src) and its call site (data-callsite) — so it expands
+  // into two steps; the breadcrumb folds them into name + λ/() glyphs.
   function chain(node) {
     var out = [], cur = node;
     while (cur) {
       if (cur.getAttribute && cur.getAttribute('data-src')) {
-        out.push({ node: cur,
-                   src: cur.getAttribute('data-src'),
-                   name: cur.getAttribute('data-name') || '?' });
+        var name = cur.getAttribute('data-name') || '?';
+        var call = cur.getAttribute('data-callsite');
+        out.push({ node: cur, src: cur.getAttribute('data-src'),
+                   name: name, kind: call ? 'defn' : 'element' });
+        if (call) out.push({ node: cur, src: call, name: name, kind: 'callsite' });
       }
       cur = cur.parentElement;
     }
@@ -116,11 +123,12 @@
     box.style.display = 'block';
   }
 
-  function crumb(text, step, leaf) {
+  function crumb(text, step, leaf, glyph) {
     var c = document.createElement('span');
-    c.className = 'insp-crumb' + (leaf ? ' leaf' : '');
+    c.className = 'insp-crumb' + (leaf ? ' leaf' : '') + (glyph ? ' insp-glyph' : '');
     c.textContent = text;
-    c.title = step.src;
+    c.title = (step.kind === 'callsite' ? 'call site → '
+             : step.kind === 'defn' ? 'definition → ' : '') + step.src;
     c.addEventListener('click', function (ev) {
       ev.preventDefault(); ev.stopPropagation();
       sendOpen(step.src);
@@ -132,21 +140,38 @@
   function renderLabel(steps) {
     label.innerHTML = '';
     var disp = steps.slice().reverse(); // outermost → innermost
-    disp.forEach(function (step, i) {
-      if (i) {
-        var s = document.createElement('span');
-        s.className = 'insp-sep';
-        s.textContent = '▸';
-        label.appendChild(s);
+    var leafStep = steps[0];
+    function sep() {
+      var s = document.createElement('span');
+      s.className = 'insp-sep';
+      s.textContent = '▸';
+      label.appendChild(s);
+    }
+    for (var i = 0; i < disp.length; i++) {
+      var step = disp[i], next = disp[i + 1];
+      if (i) sep();
+      if (next && next.node === step.node) {
+        // one component instance = two steps sharing a node: fold them into
+        // the name plus two clickable glyphs — () the call site, λ the defn
+        var callStep = step.kind === 'callsite' ? step : next;
+        var defnStep = step.kind === 'defn' ? step : next;
+        var nm = document.createElement('span');
+        nm.className = 'insp-cname';
+        nm.textContent = shortName(step.name);
+        label.appendChild(nm);
+        label.appendChild(crumb('()', callStep, callStep === leafStep, true));
+        label.appendChild(crumb('λ', defnStep, defnStep === leafStep, true));
+        i++; // consumed `next`
+      } else {
+        label.appendChild(crumb(shortName(step.name), step, step === leafStep));
       }
-      label.appendChild(crumb(shortName(step.name), step, i === disp.length - 1));
-    });
+    }
     var loc = document.createElement('span');
     loc.className = 'insp-loc';
-    loc.textContent = steps[0].src;
+    loc.textContent = leafStep.src;
     label.appendChild(loc);
 
-    var r = steps[0].node.getBoundingClientRect();
+    var r = leafStep.node.getBoundingClientRect();
     label.style.display = 'block';
     var top = r.top - label.offsetHeight - 6;
     label.style.left = Math.max(4, Math.min(r.left, innerWidth - label.offsetWidth - 4)) + 'px';
