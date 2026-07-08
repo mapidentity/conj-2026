@@ -6,14 +6,18 @@
   What to load, and in what order, comes from `clojure.tools.namespace`:
   it reads the `ns` forms, so a changed namespace is reloaded together
   with everything that depends on it. Reloading is long-settled ground in
-  Clojure and there is nothing here worth reinventing."
+  Clojure and there is nothing here worth reinventing.
+
+  How each file is loaded is this project's own concern: view namespaces
+  go through `tr-load!`, everything else through `load-file`."
   (:require
     [clojure.java.io :as io]
     [clojure.string :as str]
     [clojure.tools.namespace.dir :as ns-dir]
     [clojure.tools.namespace.file :as ns-file]
     [clojure.tools.namespace.track :as ns-track]
-    [dev.socket :as socket]))
+    [dev.socket :as socket]
+    [dev.inspector :as inspector]))
 
 ;; --- change detection: poll modified times under the watched directories ---
 ;; A real application would use java.nio's WatchService; polling behaves the
@@ -45,7 +49,24 @@
                      #(.lastModified ^java.io.File %))))
     ["src" "dev" "resources" "static"]))
 
-;; --- loading: the tracker decides what to load, and in what order ---
+;; --- loading: the tracker decides what, this namespace decides how ---
+
+(defn- view-file?
+  "Returns true for view namespaces, identified solely by filenames
+  ending in `views.clj`. These files load through `tr-load!` so their
+  Hiccup retains source positions; everything else uses `load-file`.
+  This rule is intentionally naive and should be adapted to the
+  application's architecture."
+  [path]
+  (str/ends-with? path "views.clj"))
+
+(defn load-views!
+  "Runs `tr-load!` for every view namespace at startup so source tags
+  exist from boot, rather than only after the first save."
+  []
+  (doseq [f (file-seq (io/file "src"))
+          :when (and (.isFile ^java.io.File f) (view-file? (.getPath ^java.io.File f)))]
+    (inspector/tr-load! (.getPath ^java.io.File f))))
 
 (defonce ^{:doc "The dependency tracker: which namespaces exist, what each
   one requires, and which are still pending a load. Defined with `defonce`
@@ -63,12 +84,16 @@
                     (.toPath f))))
 
 (defn- load-one!
-  "Loads the file behind one namespace. Returns true on success. A failure
-  is reported and stops the batch, since reloading the browser onto
-  half-loaded code would look healthy while showing stale output."
+  "Loads the file behind one namespace: views through `tr-load!`, which is
+  the only path that preserves their source positions, everything else
+  through `load-file`. Returns true on success. A failure is reported and
+  stops the batch, since reloading the browser onto half-loaded code would
+  look healthy while showing stale output."
   [path]
   (try
-    (load-file path)
+    (if (view-file? path)
+      (inspector/tr-load! path)
+      (load-file path))
     (println "reloaded" path)
     true
     (catch Throwable e
@@ -82,7 +107,11 @@
 
   The tracker's pending list is drained only for namespaces that actually
   loaded, so a file that fails stays pending and is retried on the next
-  scan instead of being forgotten until someone touches it again."
+  scan instead of being forgotten until someone touches it again.
+
+  The views were compiled by the loader, and no `ns` form records that,
+  so whenever anything other than a view is loaded, including the loader
+  itself, the views are re-tagged afterwards."
   []
   (if-let [t (try
                (ns-dir/scan-dirs @tracker source-dirs)
@@ -101,6 +130,10 @@
                                [[] true]
                                (::ns-track/load t))]
       (reset! tracker (update t ::ns-track/load #(drop (count loaded) %)))
+      (when (and ok?
+                 (some #(when-let [path (paths %)] (not (view-file? path)))
+                       loaded))
+        (load-views!))
       ok?)
     false))
 

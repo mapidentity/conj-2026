@@ -40,7 +40,11 @@
           (handler req)))))
 
 (defn start!
-  "Starts the app wrapped in the dev middleware, then the watcher."
+  "Tags the views, then starts the app wrapped in the dev middleware, then
+  the watcher. load-views! comes first: the server is answering requests the
+  moment main/start! returns. A page rendered before the views are
+  tagged looks fine but lost all metadata."
   []
+  (watcher/load-views!)
   (main/start! (wrap-dev #'main/app))
   (watcher/start-watcher!))
