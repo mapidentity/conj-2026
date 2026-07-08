@@ -82,6 +82,11 @@
      [:footer.site
       [:p "Plain hiccup, one webserver, no framework."]]]))
 
+(def ^:dynamic *render-boundary*
+  "Every page's hiccup passes through this fn on its way to the stringifier —
+  the app's one seam. Identity here; dev tooling rebinds it per request."
+  identity)
+
 (defn layout
   "Wraps a page's Hiccup in the full HTML document (head, inline
   stylesheet, body) and renders it to a string."
@@ -94,4 +99,4 @@
         [:meta {:charset "utf-8"}]
         [:title "Recipe Book"]
         [:style (h/raw (slurp (io/resource "style.css")))]]
-       [:body body]])))
+       [:body (*render-boundary* body)]])))

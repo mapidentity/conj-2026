@@ -8,9 +8,10 @@
   must not keep the REPL from coming up.")
 
 (defn start!
-  "Start the webserver on http://localhost:8080 (or $PORT)."
+  "Start the app wrapped in the dev middleware (dev.core/start!), on
+  http://localhost:8080 (or $PORT)."
   []
-  ((requiring-resolve 'demo.main/start!)))
+  ((requiring-resolve 'dev.core/start!)))
 
 (defn stop!
   "Stop the webserver."

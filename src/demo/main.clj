@@ -59,12 +59,14 @@
   (atom nil))
 
 (defn start!
-  "Starts the application web server."
-  []
-  (if @server
-    (println (str "already running on http://localhost:" port))
-    (do (reset! server (http/run-server #'app {:ip "0.0.0.0" :port port}))
-        (println (str "listening on http://localhost:" port)))))
+  "Starts the web server, serving `handler` — the app by default. Dev tooling
+  passes the app wrapped in its middleware."
+  ([] (start! #'app))
+  ([handler]
+   (if @server
+     (println (str "already running on http://localhost:" port))
+     (do (reset! server (http/run-server handler {:ip "0.0.0.0" :port port}))
+         (println (str "listening on http://localhost:" port))))))
 
 (defn stop!
   "Stops an already running web server."
