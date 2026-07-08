@@ -14,12 +14,25 @@
   clients
   (atom #{}))
 
+(defonce ^{:doc "Records each connected channel's role: `:browser` or `:editor`.
+  Channels that never identify themselves default to `:browser`, so
+  both directions can share one endpoint without exposing the editor
+  agent to the browser side."}
+  roles
+  (atom {}))                                 ; channel -> :browser | :editor
+
+(defn clients-of
+  "Returns the connected channels for a given role: browsers to reload
+  or editor agents to receive `open` commands."
+  [role]
+  (filter #(= role (get @roles % :browser)) @clients))
+
 (defn broadcast!
   "Sends `msg` as JSON to every connected browser. The message is
-  encoded once and sent to each browser."
+  encoded once and sent to each browser; editor agents are excluded."
   [msg]
   (let [s (json/write-str msg)]
-    (doseq [ch @clients]
+    (doseq [ch (clients-of :browser)]
       (http/send! ch s))))
 
 (defn notify-reload!
@@ -59,4 +72,4 @@
     (http/as-channel req
     {:on-open (fn [ch] (swap! clients conj ch))
      :on-receive (fn [ch raw] (handle-msg! ch (json/read-str raw :key-fn keyword)))
-     :on-close (fn [ch _] (swap! clients disj ch))})))
+     :on-close (fn [ch _] (swap! clients disj ch) (swap! roles dissoc ch))})))

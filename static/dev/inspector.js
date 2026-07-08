@@ -32,7 +32,15 @@
     '.insp-toast.err{background:#7f1d1d}' +
     '.insp-toast.show{opacity:1}' +
     'html.insp-on,html.insp-on *{cursor:crosshair!important}' +
-    'html.insp-on .insp-badge,html.insp-on .insp-crumb{cursor:pointer!important}';
+    'html.insp-on .insp-badge,html.insp-on .insp-crumb{cursor:pointer!important}' +
+    // reverse direction: a soft frame per component instance, a strong
+    // pulsing box on the exact element the editor cursor is on
+    '.insp-frame{position:fixed;z-index:99996;pointer-events:none;' +
+      'border:2px solid rgba(99,102,241,.45);border-radius:3px}' +
+    '.insp-hl{position:fixed;z-index:99998;pointer-events:none;' +
+      'background:rgba(16,185,129,.15);border:2px solid rgba(16,185,129,.95);border-radius:2px;' +
+      'animation:insp-pulse .5s ease-out}' +
+    '@keyframes insp-pulse{0%{box-shadow:0 0 0 0 rgba(16,185,129,.5)}100%{box-shadow:0 0 0 9px rgba(16,185,129,0)}}';
   document.head.appendChild(style);
 
   function mk(cls) {
@@ -62,6 +70,8 @@
       var m = JSON.parse(e.data);
       if (m.type === 'open-result') {
         if (!m.ok) flash('open failed: ' + (m.error || ''), false);
+      } else if (m.type === 'highlight') {
+        handleHighlight(m);
       }
     };
     ws.onclose = function () { ws = null; setTimeout(connect, 1000); };
@@ -161,11 +171,49 @@
     if (current.length) sendOpen(current[0].src);
   }
 
+  // --- reverse: editor cursor → on-screen element ---
+  var hlBoxes = [], hlNodes = []; // hlNodes is the truth; boxes are redrawn
+  function drawHl() {
+    hlBoxes.forEach(function (b) { b.remove(); });
+    hlBoxes = [];
+    hlNodes.forEach(function (x) {
+      var r = x.node.getBoundingClientRect();
+      if (!r.width && !r.height) return;
+      var b = mk(x.cls);
+      b.style.left = r.left + 'px';
+      b.style.top = r.top + 'px';
+      b.style.width = r.width + 'px';
+      b.style.height = r.height + 'px';
+      hlBoxes.push(b);
+    });
+  }
+  function clearHl() { hlNodes = []; drawHl(); }
+  function byAttr(attr, val) {
+    return val ? [].slice.call(document.querySelectorAll('[' + attr + '="' + val + '"]')) : [];
+  }
+  function handleHighlight(m) {
+    if (!enabled) return;         // one toggle governs both directions
+    if (!m.component) { clearHl(); return; } // cursor left the views
+    var comps = byAttr('data-name', m.component);
+    // DOM-as-truth precedence: this call site → the element literal →
+    // every instance of the component
+    var els = byAttr('data-callsite', m.callsite);
+    if (!els.length) els = byAttr('data-src', m.element);
+    if (!els.length) els = comps;
+    hlNodes = comps.map(function (n) { return { node: n, cls: 'insp-frame' }; })
+      .concat(els.map(function (n) { return { node: n, cls: 'insp-hl' }; }));
+    drawHl();
+    var r = els[0] && els[0].getBoundingClientRect();
+    if (r && (r.bottom < 0 || r.top > innerHeight)) {
+      els[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }
+
   function apply() {
     badge.classList.toggle('on', enabled);
     badge.textContent = enabled ? '⌖ inspecting' : '⌖ inspect';
     document.documentElement.classList.toggle('insp-on', enabled);
-    if (!enabled) { hide(); current = []; }
+    if (!enabled) { hide(); current = []; clearHl(); }
   }
   function setEnabled(v) {
     enabled = v;
@@ -180,8 +228,8 @@
     if (e.altKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.code === 'KeyI')) { e.preventDefault(); setEnabled(!enabled); }
     else if (e.key === 'Escape' && enabled) setEnabled(false);
   });
-  window.addEventListener('scroll', hide, true);
-  window.addEventListener('resize', hide);
+  window.addEventListener('scroll', function () { hide(); drawHl(); }, true);
+  window.addEventListener('resize', function () { hide(); drawHl(); });
 
   apply();
 })();

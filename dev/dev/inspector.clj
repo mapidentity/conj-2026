@@ -100,6 +100,93 @@
 
     :else node))
 
+;; --- the reverse direction: editor cursor -> on-screen element ---
+;; The same tools.reader pass that powers the forward tags also builds a
+;; span index. resolve-cursor produces the SAME strings the DOM carries
+;; (data-name / data-src), so the browser match is an attribute selector.
+
+(defonce ^{:doc "file -> the spans tools.reader saw in it: each view defn,
+  and every element literal inside one. Written by index-ns! on every
+  tr-load!, read by resolve-cursor. defonce, so reloading this namespace
+  leaves the index standing until the next load refills it."}
+  view-index
+  (atom {}))
+
+(defn- form-span
+  "The [line column end-line end-column] tools.reader put on form, or nil
+  when it has no position — anything the default reader produced, or a form
+  a macro built rather than read."
+  [form]
+  (let [{:keys [line column end-line end-column]} (meta form)]
+    (when (and line column end-line end-column)
+      [line column end-line end-column])))
+
+(defn- src-key
+  "The \"file:line:col\" string the DOM carries as data-src. Both directions
+  build their keys here, which is why a cursor lookup can be a plain
+  attribute selector in the browser."
+  [file [line column]]
+  (str file ":" line ":" (or column 1)))
+
+(defn- defn-form?
+  "True for a top-level (defn name …) or (defn- name …). Matched on the head
+  symbol's name, so it reads the source as text — the namespace need not be
+  loaded, and an aliased or shadowed defn is not mistaken for one."
+  [form]
+  (and (seq? form)
+       (symbol? (first form))
+       (contains? #{"defn" "defn-"} (name (first form)))
+       (symbol? (second form))))
+
+(defn- collect-elements
+  "Depth-first {:key :span} for every element literal in form."
+  [file form]
+  (cond
+    (and (vector? form) (element? form) (form-span form))
+    (cons {:key (src-key file (form-span form)) :span (form-span form)}
+          (mapcat #(collect-elements file %) form))
+    (coll? form) (mapcat #(collect-elements file %) form)
+    :else nil))
+
+(defn index-ns!
+  "Build the reverse index for file from its read top-level forms: each
+  defn's span, and every element literal's span inside one."
+  [file ns-sym forms]
+  (let [defns (filter defn-form? forms)]
+    (swap! view-index assoc file
+      {:defns (vec (keep (fn [f]
+                           (when-let [span (form-span f)]
+                             {:name (str ns-sym "/" (second f)) :span span}))
+                         defns))
+       :elements (vec (mapcat #(collect-elements file %) defns))})))
+
+(defn- contains-pos?
+  "True when line/col lies in span — inclusive start, exclusive end
+  (tools.reader's :end-column is one past the last character)."
+  [[l c el ec] line col]
+  (and (or (< l line) (and (= l line) (<= c col)))
+       (or (< line el) (and (= line el) (< col ec)))))
+
+(defn- innermost
+  "The tightest item whose span contains line/col, or nil. Sorted by span
+  size, so a nested element wins over the one enclosing it and the cursor
+  resolves to what it is actually sitting in."
+  [items line col]
+  (->> items
+       (filter #(contains-pos? (:span %) line col))
+       (sort-by (fn [{[l c el ec] :span}] [(- el l) (- ec c)]))
+       first))
+
+(defn resolve-cursor
+  "Map an editor cursor to the strings the DOM carries: the enclosing defn
+  (:component matches data-name) and the innermost element literal under
+  the cursor (:element matches data-src). nil outside any view defn."
+  [file line col]
+  (when-let [{:keys [defns elements]} (get @view-index file)]
+    (when-let [d (innermost defns line col)]
+      {:component (:name d)
+       :element (:key (innermost elements line col))})))
+
 (defn tr-load!
   "load-file, except every Hiccup element literal keeps its source position.
 
@@ -120,4 +207,5 @@
                      (if (identical? form eof) acc (recur (conj acc form)))))]
         (doseq [form body]
           (eval form))
-        (instrument-ns! (ns-name *ns*))))))
+        (instrument-ns! (ns-name *ns*))
+        (index-ns! file (ns-name *ns*) body)))))
