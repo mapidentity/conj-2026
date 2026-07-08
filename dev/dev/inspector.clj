@@ -38,6 +38,30 @@
        (nil? (namespace (first x)))
        (contains? html-tags (first (str/split (name (first x)) #"[.#]")))))
 
+(defn tag-tree
+  "Walk an assembled Hiccup tree just before it becomes HTML, turning each
+  element's source metadata into real attributes: data-src \"file:line:col\"
+  and data-name (the bare tag)."
+  [node]
+  (cond
+    (vector? node)
+    (let [m (meta node)
+          children (mapv tag-tree node)]
+      (if (and (:line m) (:file m) (element? node))
+        (let [has-attrs? (map? (second children))
+              attrs (if has-attrs? (second children) {})
+              body (subvec children (if has-attrs? 2 1))]
+          (into [(first children)
+                 (assoc attrs
+                   :data-src (str (:file m) ":" (:line m) ":" (or (:column m) 1))
+                   :data-name (first (str/split (name (first node)) #"[.#]")))]
+                body))
+        children))
+
+    (seq? node) (doall (map tag-tree node))
+
+    :else node))
+
 (defn tr-load!
   "load-file, except every Hiccup element literal keeps its source position.
 

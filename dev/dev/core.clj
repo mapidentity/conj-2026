@@ -9,16 +9,17 @@
     [dev.socket :as socket]
     [dev.static :as static]
     [dev.watcher :as watcher]
+    [dev.inspector :as inspector]
     [demo.main :as main]
     [demo.views :as views]))
 
 ;; --- the dev middleware: the app, wrapped ---
 
 (defn- dev-body
-  "Applies the app's dev render boundary: appends the dev scripts to the
-  rendered page."
+  "Applies the app's dev render boundary: tags the page with source
+  positions and appends the dev scripts."
   [body]
-  (list body
+  (list (inspector/tag-tree body)
         [:script {:src "/dev/reload.js"}]))
 
 (defn- dev-route
