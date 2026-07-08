@@ -1,0 +1,19 @@
+{:paths ["src" "resources"]
+
+ ;; What the application itself (production) needs and nothing more.
+ :deps {org.clojure/clojure {:mvn/version "1.12.4"}
+        http-kit/http-kit   {:mvn/version "2.8.0"}
+        hiccup/hiccup       {:mvn/version "2.0.0"}}
+
+ :aliases
+ {;; Code and libraries only used in development
+  :dev {:extra-paths ["dev"]
+        :extra-deps {org.clojure/data.json       {:mvn/version "2.5.2"}
+                     org.clojure/tools.reader    {:mvn/version "1.5.0"}
+                     org.clojure/tools.namespace {:mvn/version "1.5.0"}}}
+  
+  ;; Used for running the REPL.
+  :nrepl {:extra-deps {nrepl/nrepl       {:mvn/version "1.5.1"}
+                       cider/cider-nrepl {:mvn/version "0.58.0"}}
+          :main-opts ["-m" "nrepl.cmdline"
+                      "--middleware" "[cider.nrepl/cider-middleware]"]}}}

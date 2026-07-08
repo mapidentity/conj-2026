@@ -1,0 +1,83 @@
+services:
+  myapp:
+    build:
+      context: ./.devcontainer
+      dockerfile: Dockerfile
+    hostname: myapp
+    depends_on:
+      certificates:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/bash"]
+    command: ["-c", "/workspace/.devcontainer/importcerts.sh && tail -f /dev/null"]
+    environment:
+      - DISPLAY=$DISPLAY
+      - XAUTHORITY=/tmp/.Xauthority
+      - CA_CERTS=/certificates/rootCA.crt
+    volumes:
+      # - /run/user/1000/docker.sock:/var/run/docker.sock
+      - .:/workspace:cached
+      - certificates:/certificates
+      - /tmp/.X11-unix:/tmp/.X11-unix/
+    networks:
+      default:
+  # A one time service that creates the SSL certificates.
+  certificates:
+    image: eclipse-temurin:25-jre-alpine
+    entrypoint: ["/bin/ash"]
+    command: "/opt/createcerts.sh"
+    working_dir: /certificates
+    volumes:
+      - certificates:/certificates
+      - ./certificates/createcerts.sh:/opt/createcerts.sh:ro
+      - ./certificates/openssl.cnf:/opt/openssl.cnf:ro
+
+  # A web browser for visiting containered applications.
+  # run `xhost +local:` to allow the container to connect to the X server.
+  browser:
+    build:
+      context: ./browser
+      dockerfile: Dockerfile
+    hostname: browser
+    # X11 MIT-SHM needs a shared IPC namespace with the X server;
+    # without it the window renders as black/streaked garbage.
+    ipc: host
+    environment:
+      - DISPLAY=$DISPLAY
+      - XAUTHORITY=/tmp/.Xauthority
+      - CA_CERTS=/certs/rootCA.crt
+    cap_drop:
+      - MKNOD
+      - NET_RAW
+      - AUDIT_WRITE
+    depends_on:
+      ingress:
+        condition: service_started
+      certificates:
+        condition: service_completed_successfully
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix/
+      - certificates:/certs:ro
+      - ./Downloads:/root/Downloads
+
+  # Reverse proxy for HTTPS (TLS) traffic to containered services.
+  # Also serves static files (static/) directly.
+  ingress:
+    image: docker.io/library/caddy:2-alpine
+    hostname: ingress
+    depends_on:
+      certificates:
+        condition: service_completed_successfully
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./static:/static:ro
+      - certificates:/certs
+    expose:
+      - "80"
+      - "443"
+    networks:
+      default:
+        aliases:
+          - "myapp.lan"
+volumes:
+  certificates:
+    driver: local

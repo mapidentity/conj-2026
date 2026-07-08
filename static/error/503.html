@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Caddy rewrites to this page internally, so the browser keeps the original
+     URL; refreshing re-requests that URL and lands on the app once it's back. -->
+<meta http-equiv="refresh" content="5">
+<title>Recipe Book — back in a moment</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    font: 17px/1.5 system-ui, sans-serif;
+    margin: 0; min-height: 100vh;
+    display: grid; place-items: center;
+    background: #f6f4ef; color: #26221b;
+    padding: 2rem;
+  }
+  .card {
+    max-width: 26rem; text-align: center;
+    background: #fff; border: 1px solid #e4dfd3; border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(38, 34, 27, .06);
+    padding: 2.2rem 2.4rem 2rem;
+  }
+  .logo {
+    font-size: 1.25rem; font-weight: 700; letter-spacing: -.02em;
+    margin-bottom: 1.4rem;
+  }
+  .logo b { color: #c2410c; }
+  .icon {
+    width: 18px; height: 18px; color: #c2410c; margin-right: .35rem;
+    fill: none; stroke: currentColor; stroke-width: 2;
+    stroke-linecap: round; stroke-linejoin: round;
+    vertical-align: -2px;
+    animation: simmer 1.6s ease-in-out infinite;
+  }
+  @keyframes simmer {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .45; }
+  }
+  h1 { margin: 0 0 .6rem; font-size: 1.35rem; letter-spacing: -.02em; }
+  p { margin: 0; color: #5b5546; font-size: .95rem; }
+  .hint { margin-top: 1.3rem; color: #8a8272; font-size: .82rem; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="logo"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3c1.5 4.5-4 5.5-4 9.5a4 4 0 0 0 8 0c0-2-1-3.5-1-5.5 2 1 4 3.5 4 5.5"/></svg>Recipe<b>Book</b></div>
+    <h1>Back on the heat in a moment</h1>
+    <p>The kitchen is restarting. This page refreshes itself every few
+       seconds — nothing to do but wait for the pans to warm up.</p>
+    <p class="hint">Still here after a minute? The server may need a hand.</p>
+  </main>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# Extensions to add to a certificate request
+
+basicConstraints       = CA:FALSE
+authorityKeyIdentifier = keyid:always, issuer:always
+keyUsage               = nonRepudiation, digitalSignature, keyEncipherment, dataEncipherment
+subjectAltName         = @alt_names
+
+[ alt_names ]

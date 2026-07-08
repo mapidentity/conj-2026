@@ -1,0 +1,43 @@
+myapp.lan {
+	tls /certs/myapp.lan/myapp.lan.crt /certs/myapp.lan/myapp.lan.key
+	encode zstd gzip
+
+	# This is the DEVELOPMENT ingress, so nothing is cached, anywhere.
+	# Production should be served by its own config or a different ingress entirely.
+	header {
+		Cache-Control "no-store"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		-Server
+	}
+
+	root * /static
+	@static file
+	handle @static {
+		file_server
+	}
+
+	handle {
+		reverse_proxy myapp:8080
+	}
+
+	# The deploy window: while the app restarts, the proxy gets connection
+	# refusals and would show a bare 502. This serves the branded maintenance page
+	# instead. That page refreshes itself until the app answers again.
+	handle_errors {
+		@upstream-down expression `{err.status_code} in [502, 503, 504]`
+		handle @upstream-down {
+			root * /static
+			rewrite * /error/503.html
+			header Cache-Control "no-store"
+			header Retry-After "5"
+			file_server {
+				status 503
+			}
+		}
+	}
+}
