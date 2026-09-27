@@ -3,6 +3,10 @@
 // Hover boxes the nearest source-tagged element and shows the breadcrumb of
 // its tagged ancestors; click opens the source in the editor via the dev
 // socket. Crumbs are clickable too — open any ancestor directly.
+// Point, then hold Alt (Option): the path freezes, so the pointer can travel
+// to the crumbs without losing it; the wheel walks it, one step per notch or
+// flick (up = outward, down = back in), and a click opens the selected step.
+// Let go of Alt and hovering resumes.
 (function () {
   'use strict';
   var enabled = false;
@@ -18,7 +22,10 @@
       'padding:4px 8px;border-radius:5px;box-shadow:0 2px 8px rgba(0,0,0,.35)}' +
     '.insp-crumb{cursor:pointer;opacity:.65}' +
     '.insp-crumb:hover{opacity:1;text-decoration:underline}' +
-    '.insp-crumb.leaf{opacity:1;font-weight:600;color:#fff}' +
+    '.insp-crumb.sel{opacity:1;font-weight:600;color:#fff}' +
+    // frozen: the selected step takes the box's indigo, so crumb and box
+    // read as one (a shadow, not padding — the crumbs must not shift)
+    '.insp-label.frozen .insp-crumb.sel{background:#6366f1;border-radius:3px;box-shadow:0 0 0 2px #6366f1}' +
     '.insp-cname{opacity:.8;margin-right:2px}' +
     '.insp-glyph{margin-left:4px;font-weight:600}' +
     '.insp-sep{opacity:.4;margin:0 4px}' +
@@ -123,9 +130,9 @@
     box.style.display = 'block';
   }
 
-  function crumb(text, step, leaf, glyph) {
+  function crumb(text, step, glyph) {
     var c = document.createElement('span');
-    c.className = 'insp-crumb' + (leaf ? ' leaf' : '') + (glyph ? ' insp-glyph' : '');
+    c.className = 'insp-crumb' + (glyph ? ' insp-glyph' : '');
     c.textContent = text;
     c.title = (step.kind === 'callsite' ? 'call site → '
              : step.kind === 'defn' ? 'definition → ' : '') + step.src;
@@ -133,14 +140,39 @@
       ev.preventDefault(); ev.stopPropagation();
       sendOpen(step.src);
     });
+    // hovering a crumb previews its node; leaving it puts the box back
     c.addEventListener('mouseenter', function () { drawBox(step.node); });
+    c.addEventListener('mouseleave', function () {
+      if (current[sel]) drawBox(current[sel].node);
+    });
+    crumbs.push({ el: c, step: step });
     return c;
   }
 
-  function renderLabel(steps) {
+  // The label is rebuilt only for a new chain; a walk just moves the mark,
+  // so the crumb under a resting pointer is never swapped out beneath it.
+  // It stays anchored on the innermost node, holding still as the box grows.
+  var labelSteps = null, crumbs = [], loc = null;
+  function renderLabel(steps, selStep) {
+    if (steps !== labelSteps) buildLabel(steps);
+    crumbs.forEach(function (c) { c.el.classList.toggle('sel', c.step === selStep); });
+    loc.textContent = selStep.src;
+
+    var r = steps[0].node.getBoundingClientRect();
+    label.style.display = 'block';
+    var top = r.top - label.offsetHeight - 6;
+    if (top < 4) top = r.bottom + 6;
+    // a frozen path can be scrolled away: keep its crumbs on screen, clear
+    // of the badge
+    if (frozen) top = Math.max(4, Math.min(top, badge.getBoundingClientRect().top - label.offsetHeight - 4));
+    label.style.left = Math.max(4, Math.min(r.left, innerWidth - label.offsetWidth - 4)) + 'px';
+    label.style.top = top + 'px';
+  }
+  function buildLabel(steps) {
     label.innerHTML = '';
+    labelSteps = steps;
+    crumbs = [];
     var disp = steps.slice().reverse(); // outermost → innermost
-    var leafStep = steps[0];
     function sep() {
       var s = document.createElement('span');
       s.className = 'insp-sep';
@@ -159,41 +191,105 @@
         nm.className = 'insp-cname';
         nm.textContent = shortName(step.name);
         label.appendChild(nm);
-        label.appendChild(crumb('()', callStep, callStep === leafStep, true));
-        label.appendChild(crumb('λ', defnStep, defnStep === leafStep, true));
+        label.appendChild(crumb('()', callStep, true));
+        label.appendChild(crumb('λ', defnStep, true));
         i++; // consumed `next`
       } else {
-        label.appendChild(crumb(shortName(step.name), step, step === leafStep));
+        label.appendChild(crumb(shortName(step.name), step));
       }
     }
-    var loc = document.createElement('span');
+    loc = document.createElement('span');
     loc.className = 'insp-loc';
-    loc.textContent = leafStep.src;
     label.appendChild(loc);
-
-    var r = leafStep.node.getBoundingClientRect();
-    label.style.display = 'block';
-    var top = r.top - label.offsetHeight - 6;
-    label.style.left = Math.max(4, Math.min(r.left, innerWidth - label.offsetWidth - 4)) + 'px';
-    label.style.top = (top < 4 ? r.bottom + 6 : top) + 'px';
   }
 
   function hide() { box.style.display = 'none'; label.style.display = 'none'; }
 
   var current = []; // the hovered chain, innermost first
-  function onMove(e) {
-    if (!enabled || ours(e.target)) return;
-    var leaf = e.target.closest ? e.target.closest('[data-src]') : null;
+  var sel = 0;      // index of the selected step; only a walk moves it off 0
+  var ptrX = -1, ptrY = -1; // where the pointer last was
+  function render() {
+    drawBox(current[sel].node);
+    renderLabel(current, current[sel]);
+  }
+  function hover(t) {
+    var leaf = t.closest ? t.closest('[data-src]') : null;
     current = leaf ? chain(leaf) : [];
+    sel = 0;
     if (!current.length) { hide(); return; }
-    drawBox(current[0].node);
-    renderLabel(current);
+    render();
+  }
+
+  // --- walk: Alt freezes the path, the wheel walks it ---
+  // Pointer moves no longer touch it, so the crumbs can be reached across
+  // the gap. One wheel gesture is one step: its first event steps, the rest
+  // is swallowed until WALK_GAP ms of quiet — a mouse notch, a trackpad
+  // flick of any length and a single huge delta all move exactly one step.
+  var WALK_GAP = 150;
+  var frozen = false, walkAt = -Infinity, altUpAt = -Infinity;
+  function isAlt(e) { // not AltGraph; X11 calls Shift+Alt "Meta"
+    return e.key === 'Alt' || (e.key !== 'AltGraph' && (e.code === 'AltLeft' || e.code === 'AltRight'));
+  }
+  function freeze() {
+    if (frozen || !enabled) return;
+    if (label.style.display !== 'block' && ptrX >= 0) { // e.g. hidden by a scroll
+      var t = document.elementFromPoint(ptrX, ptrY);
+      if (t && !ours(t)) hover(t);
+    }
+    if (!current.length || label.style.display !== 'block') return;
+    frozen = true;
+    walkAt = -Infinity;
+    label.classList.add('frozen');
+    render();
+  }
+  function unfreeze(rehover) {
+    if (!frozen) return;
+    frozen = false;
+    sel = 0;
+    label.classList.remove('frozen');
+    if (!rehover || !enabled) return;
+    // live again: take up whatever is under the pointer now (on the label
+    // itself, keep its path, back on the innermost step)
+    var t = document.elementFromPoint(ptrX, ptrY);
+    if (t && !ours(t)) hover(t);
+    else if (current.length) render();
+  }
+  function walk(e) {
+    // (most systems turn a Shift+wheel sideways: it is still the wheel)
+    var dy = e.deltaY || (e.shiftKey ? e.deltaX : 0);
+    if (!dy) return;       // sideways: swallowed, no step
+    var fresh = e.timeStamp - walkAt > WALK_GAP;
+    walkAt = e.timeStamp;
+    if (!fresh) return;    // the rest of this gesture
+    var to = Math.max(0, Math.min(current.length - 1, sel + (dy < 0 ? 1 : -1))); // up: outward
+    if (to !== sel) { sel = to; render(); }
+  }
+  function onWheel(e) {
+    if (frozen && !e.altKey) unfreeze(true); // Alt went up out of our sight
+    if (!e.altKey) return;
+    // Alt+wheel belongs to the inspector while it is on: no scroll, no zoom,
+    // no history swipe
+    e.preventDefault();
+    e.stopPropagation();
+    // Firefox can deliver a wheel queued before Alt went up after its keyup:
+    // it must not freeze again, with no keyup left to come
+    if (e.timeStamp <= altUpAt) return;
+    freeze(); // Alt was down before there was a path to hold
+    if (frozen) walk(e);
+  }
+
+  function onMove(e) {
+    ptrX = e.clientX; ptrY = e.clientY;
+    if (!enabled) return;
+    if (frozen && !e.altKey) unfreeze(false); // Alt went up out of our sight
+    if (frozen || ours(e.target)) return;
+    hover(e.target);
   }
   function onClick(e) {
     if (!enabled || ours(e.target)) return;
     e.preventDefault();
     e.stopPropagation(); // inspect mode swallows the app's click
-    if (current.length) sendOpen(current[0].src);
+    if (current.length) sendOpen(current[sel].src);
   }
 
   // --- reverse: editor cursor → on-screen element ---
@@ -234,11 +330,15 @@
     }
   }
 
+  var WHEEL_OPTS = { capture: true, passive: false };
   function apply() {
     badge.classList.toggle('on', enabled);
     badge.textContent = enabled ? '⌖ inspecting' : '⌖ inspect';
     document.documentElement.classList.toggle('insp-on', enabled);
-    if (!enabled) { hide(); current = []; clearHl(); }
+    if (!enabled) { unfreeze(false); hide(); current = []; sel = 0; clearHl(); }
+    // a non-passive wheel listener costs the page its threaded scrolling:
+    // hold it only while inspecting
+    window[enabled ? 'addEventListener' : 'removeEventListener']('wheel', onWheel, WHEEL_OPTS);
   }
   function setEnabled(v) {
     enabled = v;
@@ -252,9 +352,20 @@
   document.addEventListener('keydown', function (e) {
     if (e.altKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.code === 'KeyI')) { e.preventDefault(); setEnabled(!enabled); }
     else if (e.key === 'Escape' && enabled) setEnabled(false);
+    // Alt itself: freeze, and keep the browser's own Alt (menu bar,
+    // menu focus) out of it while inspecting
+    // (a held key repeats its keydown on some systems: only the press counts)
+    else if (isAlt(e) && enabled) { e.preventDefault(); if (!e.repeat) freeze(); }
   });
-  window.addEventListener('scroll', function () { hide(); drawHl(); }, true);
-  window.addEventListener('resize', function () { hide(); drawHl(); });
+  document.addEventListener('keyup', function (e) {
+    if (isAlt(e) && enabled) { e.preventDefault(); altUpAt = e.timeStamp; unfreeze(true); }
+  });
+  // Alt-Tab (or any leaving) must not strand a frozen path
+  window.addEventListener('blur', function () { unfreeze(true); });
+  document.addEventListener('visibilitychange', function () { unfreeze(true); });
+  function reflow() { if (frozen) render(); else hide(); drawHl(); }
+  window.addEventListener('scroll', reflow, true);
+  window.addEventListener('resize', reflow);
 
   apply();
 })();
